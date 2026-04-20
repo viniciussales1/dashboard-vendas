@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Dashboard Seguro de Vendas", layout="wide")
+st.set_page_config(page_title="Análise Preditiva + Análise Descritiva", layout="wide")
 
 # -----------------------------
 # CONFIGURAÇÃO DE USUÁRIO
@@ -20,8 +20,8 @@ if "logado" not in st.session_state:
 # FUNÇÃO DE LOGIN
 # -----------------------------
 def tela_login():
-    st.title("Área Segura do Sistema")
-    st.subheader("Faça login para acessar o dashboard")
+    st.title("Área de login do Sistema")
+    st.subheader("Faça login para acessar o site")
 
     usuario = st.text_input("Usuário")
     senha = st.text_input("Senha", type="password")

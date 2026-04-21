@@ -1,10 +1,10 @@
+import re
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
 from preventivo import processar_dados
 from relatorio import gerar_pdf
-from recomendacoes import gerar_recomendacoes
 
 st.set_page_config(
     page_title="Análise Preditiva + Análise Descritiva",
@@ -25,6 +25,352 @@ SENHA_CORRETA = "1234"
 
 if "logado" not in st.session_state:
     st.session_state.logado = False
+
+
+def normalizar_nome_coluna(nome):
+    nome = str(nome).strip().lower()
+    nome = nome.replace("ç", "c")
+    nome = nome.replace("ã", "a").replace("á", "a").replace("à", "a").replace("â", "a")
+    nome = nome.replace("é", "e").replace("ê", "e")
+    nome = nome.replace("í", "i")
+    nome = nome.replace("ó", "o").replace("ô", "o").replace("õ", "o")
+    nome = nome.replace("ú", "u")
+    nome = re.sub(r"[^a-z0-9]+", "_", nome)
+    nome = re.sub(r"_+", "_", nome).strip("_")
+    return nome
+
+
+def reconhecer_colunas(chunk):
+    mapa_sinonimos = {
+        "data": [
+            "data", "dt", "dia", "data_venda", "dt_venda", "data_da_venda",
+            "data_movimento", "data_pedido", "date"
+        ],
+        "produto": [
+            "produto", "item", "nome_produto", "descricao", "descricao_produto",
+            "produto_nome", "mercadoria", "product", "nome"
+        ],
+        "quantidade": [
+            "quantidade", "qtd", "quant", "qte", "quantidade_vendida",
+            "qtde", "units", "unidades", "volume"
+        ],
+        "preco": [
+            "preco", "preco_unitario", "valor", "valor_unitario",
+            "preco_venda", "price", "unit_price", "precounitario"
+        ],
+        "estoque_atual": [
+            "estoque_atual", "estoque", "saldo_estoque", "qtd_estoque",
+            "estoque_disponivel", "inventory", "stock"
+        ]
+    }
+
+    colunas_originais = list(chunk.columns)
+    colunas_normalizadas = {col: normalizar_nome_coluna(col) for col in colunas_originais}
+
+    renomear = {}
+    encontradas = {}
+
+    for coluna_padrao, sinonimos in mapa_sinonimos.items():
+        for original, normalizada in colunas_normalizadas.items():
+            if normalizada == coluna_padrao or normalizada in sinonimos:
+                renomear[original] = coluna_padrao
+                encontradas[coluna_padrao] = original
+                break
+
+    chunk = chunk.rename(columns=renomear)
+    return chunk, encontradas
+
+
+def preparar_chunk(chunk):
+    chunk = chunk.copy()
+    chunk, encontradas = reconhecer_colunas(chunk)
+    faltantes = []
+
+    if "data" not in chunk.columns:
+        chunk["data"] = pd.date_range(start="2025-01-01", periods=len(chunk))
+        faltantes.append("data")
+    else:
+        chunk["data"] = pd.to_datetime(chunk["data"], errors="coerce")
+
+    if "produto" not in chunk.columns:
+        chunk["produto"] = "Produto Genérico"
+        faltantes.append("produto")
+
+    if "quantidade" not in chunk.columns:
+        chunk["quantidade"] = 1
+        faltantes.append("quantidade")
+    else:
+        chunk["quantidade"] = pd.to_numeric(chunk["quantidade"], errors="coerce").fillna(1)
+
+    if "preco" not in chunk.columns:
+        chunk["preco"] = 0
+        faltantes.append("preco")
+    else:
+        chunk["preco"] = pd.to_numeric(chunk["preco"], errors="coerce").fillna(0)
+
+    if "estoque_atual" not in chunk.columns:
+        chunk["estoque_atual"] = 0
+        faltantes.append("estoque_atual")
+    else:
+        chunk["estoque_atual"] = pd.to_numeric(chunk["estoque_atual"], errors="coerce").fillna(0)
+
+    chunk = chunk.dropna(subset=["data"])
+    return chunk, faltantes, encontradas
+
+
+def acumular_series(dicionario, serie):
+    for chave, valor in serie.items():
+        dicionario[chave] = dicionario.get(chave, 0) + valor
+
+
+def primeira_passagem_metadata(arquivo, chunksize=100_000):
+    arquivo.seek(0)
+
+    data_min = None
+    data_max = None
+    produtos = set()
+    colunas_reconhecidas = {}
+    faltantes = set()
+
+    for chunk in pd.read_csv(arquivo, chunksize=chunksize):
+        chunk, faltantes_chunk, reconhecidas_chunk = preparar_chunk(chunk)
+
+        for k, v in reconhecidas_chunk.items():
+            if k not in colunas_reconhecidas:
+                colunas_reconhecidas[k] = v
+
+        for item in faltantes_chunk:
+            faltantes.add(item)
+
+        if chunk.empty:
+            continue
+
+        chunk_min = chunk["data"].min()
+        chunk_max = chunk["data"].max()
+
+        if data_min is None or chunk_min < data_min:
+            data_min = chunk_min
+        if data_max is None or chunk_max > data_max:
+            data_max = chunk_max
+
+        produtos.update(chunk["produto"].dropna().unique().tolist())
+
+    arquivo.seek(0)
+
+    return {
+        "data_min": data_min,
+        "data_max": data_max,
+        "produtos": sorted(produtos),
+        "colunas_reconhecidas": colunas_reconhecidas,
+        "faltantes": sorted(faltantes)
+    }
+
+
+def processar_em_chunks(arquivo, data_inicial, data_final, produto_escolhido, chunksize=100_000, limite_amostra_ml=200_000):
+    arquivo.seek(0)
+
+    total_vendido = 0
+    total_faturado = 0.0
+    quantidade_por_produto = {}
+    faturamento_por_produto = {}
+    quantidade_por_semana_produto = {}
+    ultimo_estoque_por_produto = {}
+
+    preview_partes = []
+    preview_restante = 5000
+
+    amostra_ml_partes = []
+    amostra_ml_restante = limite_amostra_ml
+
+    for chunk in pd.read_csv(arquivo, chunksize=chunksize):
+        chunk, _, _ = preparar_chunk(chunk)
+
+        if chunk.empty:
+            continue
+
+        chunk["ano"] = chunk["data"].dt.year
+        chunk["mes"] = chunk["data"].dt.month
+        chunk["dia"] = chunk["data"].dt.day
+        chunk["dia_semana"] = chunk["data"].dt.dayofweek
+        chunk["semana"] = chunk["data"].dt.isocalendar().week.astype(int)
+        chunk["faturamento"] = chunk["quantidade"] * chunk["preco"]
+
+        chunk = chunk[
+            (chunk["data"].dt.date >= data_inicial) &
+            (chunk["data"].dt.date <= data_final)
+        ]
+
+        if produto_escolhido != "Todos":
+            chunk = chunk[chunk["produto"] == produto_escolhido]
+
+        if chunk.empty:
+            continue
+
+        total_vendido += int(chunk["quantidade"].sum())
+        total_faturado += float(chunk["faturamento"].sum())
+
+        acumular_series(
+            quantidade_por_produto,
+            chunk.groupby("produto")["quantidade"].sum()
+        )
+
+        acumular_series(
+            faturamento_por_produto,
+            chunk.groupby("produto")["faturamento"].sum()
+        )
+
+        acumular_series(
+            quantidade_por_semana_produto,
+            chunk.groupby(["semana", "produto"])["quantidade"].sum()
+        )
+
+        estoque_chunk = chunk.groupby("produto")["estoque_atual"].last()
+        for produto, estoque in estoque_chunk.items():
+            ultimo_estoque_por_produto[produto] = estoque
+
+        if preview_restante > 0:
+            parte_preview = chunk.head(preview_restante)
+            preview_partes.append(parte_preview)
+            preview_restante -= len(parte_preview)
+
+        if amostra_ml_restante > 0:
+            parte_amostra = chunk.head(amostra_ml_restante)
+            amostra_ml_partes.append(parte_amostra)
+            amostra_ml_restante -= len(parte_amostra)
+
+    arquivo.seek(0)
+
+    df_preview = pd.concat(preview_partes, ignore_index=True) if preview_partes else pd.DataFrame()
+    df_amostra_ml = pd.concat(amostra_ml_partes, ignore_index=True) if amostra_ml_partes else pd.DataFrame()
+
+    mais_vendidos = (
+        pd.Series(quantidade_por_produto, dtype="float64")
+        .sort_values(ascending=False)
+        if quantidade_por_produto else pd.Series(dtype="float64")
+    )
+
+    faturamento_produto = (
+        pd.Series(faturamento_por_produto, dtype="float64")
+        .sort_values(ascending=False)
+        if faturamento_por_produto else pd.Series(dtype="float64")
+    )
+
+    if quantidade_por_semana_produto:
+        vendas_semanais = pd.DataFrame(
+            [
+                {"semana": semana, "produto": produto, "quantidade": quantidade}
+                for (semana, produto), quantidade in quantidade_por_semana_produto.items()
+            ]
+        ).sort_values(["semana", "quantidade"], ascending=[True, False])
+    else:
+        vendas_semanais = pd.DataFrame(columns=["semana", "produto", "quantidade"])
+
+    if not vendas_semanais.empty:
+        top_por_semana = vendas_semanais.loc[
+            vendas_semanais.groupby("semana")["quantidade"].idxmax()
+        ]
+    else:
+        top_por_semana = pd.DataFrame(columns=["semana", "produto", "quantidade"])
+
+    if not vendas_semanais.empty:
+        media_semanal = (
+            vendas_semanais.groupby("produto")["quantidade"]
+            .mean()
+            .reset_index()
+        )
+        media_semanal.columns = ["produto", "media_venda_semanal"]
+
+        estoque_produto = pd.DataFrame(
+            [{"produto": produto, "estoque_atual": estoque} for produto, estoque in ultimo_estoque_por_produto.items()]
+        )
+
+        reposicao = pd.merge(media_semanal, estoque_produto, on="produto", how="left")
+        reposicao["estoque_ideal"] = (reposicao["media_venda_semanal"] * 1.2).round()
+        reposicao["quantidade_repor"] = (
+            reposicao["estoque_ideal"] - reposicao["estoque_atual"]
+        ).clip(lower=0).round()
+        reposicao = reposicao.sort_values("quantidade_repor", ascending=False)
+    else:
+        reposicao = pd.DataFrame(columns=["produto", "media_venda_semanal", "estoque_atual", "estoque_ideal", "quantidade_repor"])
+
+    return {
+        "df_preview": df_preview,
+        "df_amostra_ml": df_amostra_ml,
+        "mais_vendidos": mais_vendidos,
+        "faturamento_produto": faturamento_produto,
+        "vendas_semanais": vendas_semanais,
+        "top_por_semana": top_por_semana,
+        "reposicao": reposicao,
+        "total_vendido": total_vendido,
+        "total_faturado": total_faturado
+    }
+
+
+def gerar_recomendacoes_resumo(data_inicial, data_final, total_faturado, mais_vendidos, reposicao):
+    recomendacoes = []
+
+    recomendacoes.append(
+        f"Período analisado: {data_inicial.strftime('%d/%m/%Y')} até {data_final.strftime('%d/%m/%Y')}."
+    )
+
+    if mais_vendidos is not None and not mais_vendidos.empty:
+        produto_top = mais_vendidos.index[0]
+        qtd_top = int(mais_vendidos.iloc[0])
+        recomendacoes.append(
+            f"O produto com maior volume de vendas foi {produto_top}, com {qtd_top} unidades."
+        )
+
+        if len(mais_vendidos) > 1:
+            produto_segundo = mais_vendidos.index[1]
+            qtd_segundo = int(mais_vendidos.iloc[1])
+            recomendacoes.append(
+                f"O segundo produto com maior volume de vendas foi {produto_segundo}, com {qtd_segundo} unidades."
+            )
+
+        produto_menos = mais_vendidos.index[-1]
+        qtd_menos = int(mais_vendidos.iloc[-1])
+        recomendacoes.append(
+            f"O produto com menor volume de vendas foi {produto_menos}, com {qtd_menos} unidades."
+        )
+
+    if reposicao is not None and not reposicao.empty:
+        urgente = reposicao[reposicao["quantidade_repor"] > 0]
+
+        if not urgente.empty:
+            urgente = urgente.sort_values("quantidade_repor", ascending=False)
+
+            top_urgente = urgente.iloc[0]
+            recomendacoes.append(
+                f"Há necessidade de reposição do produto {top_urgente['produto']}, com estimativa de {int(top_urgente['quantidade_repor'])} unidades."
+            )
+
+            if len(urgente) > 1:
+                segundo = urgente.iloc[1]
+                recomendacoes.append(
+                    f"O produto {segundo['produto']} também apresenta necessidade de reposição de aproximadamente {int(segundo['quantidade_repor'])} unidades."
+                )
+
+            recomendacoes.append(
+                f"Foram identificados {len(urgente)} produtos com necessidade de reposição no período analisado."
+            )
+        else:
+            recomendacoes.append(
+                "Não foram identificadas necessidades imediatas de reposição de estoque."
+            )
+
+        estavel = reposicao[reposicao["quantidade_repor"] == 0]
+        if not estavel.empty:
+            produto_estavel = estavel.iloc[0]["produto"]
+            recomendacoes.append(
+                f"O produto {produto_estavel} apresenta nível de estoque adequado no momento."
+            )
+
+    if total_faturado > 0:
+        recomendacoes.append(
+            f"O faturamento total no período foi de R$ {total_faturado:,.2f}."
+        )
+
+    return recomendacoes
 
 
 def tela_login():
@@ -62,7 +408,7 @@ def botao_logout():
 def dashboard():
     st.markdown('<div class="top-bar">Dashboard Inteligente de Vendas</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva, previsão de vendas, sugestões de estoque e recomendações automáticas.</div>',
+        '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva completa, recomendações automáticas e previsão com amostragem controlada para melhor desempenho.</div>',
         unsafe_allow_html=True
     )
 
@@ -82,35 +428,33 @@ def dashboard():
         st.info("Envie um arquivo CSV pela barra lateral para começar.")
         return
 
+    tamanho_mb = arquivo.size / (1024 * 1024)
+    if tamanho_mb > 100:
+        st.error(f"Arquivo muito grande ({tamanho_mb:.2f} MB). Limite permitido: 100 MB.")
+        return
+
     try:
-        df = pd.read_csv(arquivo)
+        metadata = primeira_passagem_metadata(arquivo)
     except Exception as e:
         st.error(f"Erro ao ler o arquivo: {e}")
         return
 
-    resultado = processar_dados(df)
+    if metadata["colunas_reconhecidas"]:
+        st.info(
+            f"Colunas reconhecidas automaticamente: {metadata['colunas_reconhecidas']}"
+        )
 
-    if not resultado["sucesso"]:
-        st.error(resultado["erro"])
+    if metadata["faltantes"]:
+        st.warning(
+            f"O sistema adaptou automaticamente as colunas faltantes: {metadata['faltantes']}"
+        )
+
+    if metadata["data_min"] is None or metadata["data_max"] is None:
+        st.error("Não foi possível identificar dados válidos no arquivo.")
         return
 
-    if resultado.get("colunas_reconhecidas"):
-        st.info(
-            f"Colunas reconhecidas automaticamente: {resultado['colunas_reconhecidas']}"
-        )
-
-    if resultado.get("faltantes"):
-        st.warning(
-            f"O sistema adaptou automaticamente as colunas faltantes: {resultado['faltantes']}"
-        )
-
-    df_limpo = resultado["df_limpo"]
-    mae = resultado["mae"]
-    rmse = resultado["rmse"]
-
-    # Filtro de período
-    data_min = df_limpo["data"].min().date()
-    data_max = df_limpo["data"].max().date()
+    data_min = metadata["data_min"].date()
+    data_max = metadata["data_max"].date()
 
     intervalo_datas = st.sidebar.date_input(
         "Filtrar por período",
@@ -125,20 +469,33 @@ def dashboard():
         data_inicial = data_min
         data_final = data_max
 
-    # Filtra primeiro por data
-    df_filtrado = df_limpo[
-        (df_limpo["data"].dt.date >= data_inicial) &
-        (df_limpo["data"].dt.date <= data_final)
-    ].copy()
-
-    produtos = ["Todos"] + sorted(df_filtrado["produto"].unique().tolist()) if not df_filtrado.empty else ["Todos"]
+    produtos = ["Todos"] + metadata["produtos"] if metadata["produtos"] else ["Todos"]
     produto_escolhido = st.sidebar.selectbox("Filtrar produto", produtos)
 
-    # Depois filtra por produto
-    if produto_escolhido != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["produto"] == produto_escolhido].copy()
+    try:
+        resultado = processar_em_chunks(
+            arquivo=arquivo,
+            data_inicial=data_inicial,
+            data_final=data_final,
+            produto_escolhido=produto_escolhido,
+            chunksize=100_000,
+            limite_amostra_ml=200_000
+        )
+    except Exception as e:
+        st.error(f"Erro ao processar o arquivo: {e}")
+        return
 
-    if df_filtrado.empty:
+    df_preview = resultado["df_preview"]
+    df_amostra_ml = resultado["df_amostra_ml"]
+    mais_vendidos = resultado["mais_vendidos"]
+    faturamento_produto = resultado["faturamento_produto"]
+    vendas_semanais = resultado["vendas_semanais"]
+    top_por_semana = resultado["top_por_semana"]
+    reposicao = resultado["reposicao"]
+    total_vendido = int(resultado["total_vendido"])
+    total_faturado = float(resultado["total_faturado"])
+
+    if total_vendido == 0 and total_faturado == 0 and df_preview.empty:
         st.warning("Nenhum dado encontrado para o período ou filtro selecionado.")
         return
 
@@ -146,63 +503,31 @@ def dashboard():
         f"Período selecionado: {data_inicial.strftime('%d/%m/%Y')} até {data_final.strftime('%d/%m/%Y')}"
     )
 
-    # Recalcular tudo com base no filtro aplicado
-    mais_vendidos = df_filtrado.groupby("produto")["quantidade"].sum().sort_values(ascending=False)
+    total_produtos = int(len(mais_vendidos))
+    estoque_medio = float(df_preview["estoque_atual"].mean()) if not df_preview.empty else 0.0
 
-    faturamento_produto = (
-        df_filtrado.groupby("produto")["faturamento"]
-        .sum()
-        .sort_values(ascending=False)
+    recomendacoes = gerar_recomendacoes_resumo(
+        data_inicial=data_inicial,
+        data_final=data_final,
+        total_faturado=total_faturado,
+        mais_vendidos=mais_vendidos,
+        reposicao=reposicao
     )
 
-    vendas_semanais = (
-        df_filtrado.groupby(["semana", "produto"])["quantidade"]
-        .sum()
-        .reset_index()
-        .sort_values(["semana", "quantidade"], ascending=[True, False])
-    )
+    # Previsão: amostra controlada para não derrubar o servidor
+    mae = 0.0
+    rmse = 0.0
+    df_previsoes = pd.DataFrame(columns=["produto", "data_previsao", "quantidade_prevista"])
 
-    top_por_semana = vendas_semanais.loc[
-        vendas_semanais.groupby("semana")["quantidade"].idxmax()
-    ] if not vendas_semanais.empty else pd.DataFrame(columns=["semana", "produto", "quantidade"])
+    if not df_amostra_ml.empty:
+        resultado_ml = processar_dados(df_amostra_ml)
+        if resultado_ml["sucesso"]:
+            mae = resultado_ml["mae"]
+            rmse = resultado_ml["rmse"]
+            df_previsoes = resultado_ml["df_previsoes"]
 
-    reposicao = (
-        df_filtrado.groupby(["produto", "semana"])["quantidade"]
-        .sum()
-        .reset_index()
-        .groupby("produto")["quantidade"]
-        .mean()
-        .reset_index()
-    )
-    reposicao.columns = ["produto", "media_venda_semanal"]
-
-    estoque_produto = (
-        df_filtrado.groupby("produto")["estoque_atual"]
-        .last()
-        .reset_index()
-    )
-
-    reposicao = pd.merge(reposicao, estoque_produto, on="produto", how="left")
-    reposicao["estoque_ideal"] = (reposicao["media_venda_semanal"] * 1.2).round()
-    reposicao["quantidade_repor"] = (
-        reposicao["estoque_ideal"] - reposicao["estoque_atual"]
-    ).clip(lower=0).round()
-    reposicao = reposicao.sort_values("quantidade_repor", ascending=False)
-
-    df_previsoes = resultado["df_previsoes"]
-    if produto_escolhido != "Todos":
-        df_previsoes = df_previsoes[df_previsoes["produto"] == produto_escolhido]
-
-    recomendacoes = gerar_recomendacoes(
-        df_filtrado,
-        reposicao,
-        mais_vendidos
-    )
-
-    total_vendido = int(df_filtrado["quantidade"].sum())
-    total_faturado = float(df_filtrado["faturamento"].sum())
-    total_produtos = int(df_filtrado["produto"].nunique())
-    estoque_medio = float(df_filtrado["estoque_atual"].mean())
+            if produto_escolhido != "Todos":
+                df_previsoes = df_previsoes[df_previsoes["produto"] == produto_escolhido]
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -217,6 +542,7 @@ def dashboard():
     st.subheader("Gerar relatório em PDF")
 
     tabela_pdf = mais_vendidos.reset_index()
+    tabela_pdf.columns = ["produto", "quantidade"]
 
     pdf = gerar_pdf(
         total_vendido=total_vendido,
@@ -237,13 +563,17 @@ def dashboard():
 
     with aba1:
         st.subheader("Prévia dos dados")
-        st.dataframe(df_filtrado, use_container_width=True)
+        st.caption("A prévia exibe uma amostra das linhas filtradas. A análise foi feita com todas as linhas do arquivo.")
+        st.dataframe(df_preview, use_container_width=True)
 
     with aba2:
         st.subheader("Produtos mais vendidos")
 
         tabela_mais_vendidos = mais_vendidos.reset_index()
+        tabela_mais_vendidos.columns = ["produto", "quantidade"]
+
         tabela_faturamento = faturamento_produto.reset_index()
+        tabela_faturamento.columns = ["produto", "faturamento"]
 
         col_a, col_b = st.columns(2)
 
@@ -251,46 +581,53 @@ def dashboard():
             st.markdown("### Ranking por quantidade")
             st.dataframe(tabela_mais_vendidos, use_container_width=True)
 
-            fig1, ax1 = plt.subplots(figsize=(8, 4))
-            tabela_mais_vendidos.set_index("produto")["quantidade"].plot(kind="bar", ax=ax1)
-            ax1.set_title("Produtos mais vendidos")
-            ax1.set_xlabel("Produto")
-            ax1.set_ylabel("Quantidade")
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig1)
+            if not tabela_mais_vendidos.empty:
+                fig1, ax1 = plt.subplots(figsize=(8, 4))
+                tabela_mais_vendidos.set_index("produto")["quantidade"].head(20).plot(kind="bar", ax=ax1)
+                ax1.set_title("Produtos mais vendidos")
+                ax1.set_xlabel("Produto")
+                ax1.set_ylabel("Quantidade")
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                st.pyplot(fig1)
 
         with col_b:
             st.markdown("### Ranking por faturamento")
             st.dataframe(tabela_faturamento, use_container_width=True)
 
-            fig2, ax2 = plt.subplots(figsize=(8, 4))
-            tabela_faturamento.set_index("produto")["faturamento"].plot(kind="bar", ax=ax2)
-            ax2.set_title("Faturamento por produto")
-            ax2.set_xlabel("Produto")
-            ax2.set_ylabel("Faturamento")
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig2)
+            if not tabela_faturamento.empty:
+                fig2, ax2 = plt.subplots(figsize=(8, 4))
+                tabela_faturamento.set_index("produto")["faturamento"].head(20).plot(kind="bar", ax=ax2)
+                ax2.set_title("Faturamento por produto")
+                ax2.set_xlabel("Produto")
+                ax2.set_ylabel("Faturamento")
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                st.pyplot(fig2)
 
     with aba3:
         st.subheader("Produtos mais vendidos por semana")
 
         st.dataframe(top_por_semana, use_container_width=True)
 
-        vendas_por_semana = df_filtrado.groupby("semana")["quantidade"].sum()
+        vendas_por_semana = (
+            vendas_semanais.groupby("semana")["quantidade"].sum()
+            if not vendas_semanais.empty else pd.Series(dtype="float64")
+        )
 
-        fig3, ax3 = plt.subplots(figsize=(10, 4))
-        vendas_por_semana.plot(marker="o", ax=ax3)
-        ax3.set_title("Quantidade vendida por semana")
-        ax3.set_xlabel("Semana")
-        ax3.set_ylabel("Quantidade")
-        ax3.grid(True)
-        plt.tight_layout()
-        st.pyplot(fig3)
+        if not vendas_por_semana.empty:
+            fig3, ax3 = plt.subplots(figsize=(10, 4))
+            vendas_por_semana.plot(marker="o", ax=ax3)
+            ax3.set_title("Quantidade vendida por semana")
+            ax3.set_xlabel("Semana")
+            ax3.set_ylabel("Quantidade")
+            ax3.grid(True)
+            plt.tight_layout()
+            st.pyplot(fig3)
 
     with aba4:
         st.subheader("Previsão de vendas futuras")
+        st.caption("A previsão usa uma amostra controlada dos dados para manter o desempenho do ambiente web.")
 
         p1, p2 = st.columns(2)
         with p1:

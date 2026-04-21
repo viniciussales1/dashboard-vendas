@@ -2,7 +2,13 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Análise Preditiva + Análise Descritiva", layout="wide")
+from preventivo import processar_dados
+
+st.set_page_config(
+    page_title="Análise Preditiva + Análise Descritiva",
+    page_icon="📊",
+    layout="wide"
+)
 
 def carregar_css(nome_arquivo):
     with open(nome_arquivo, "r", encoding="utf-8") as f:
@@ -10,29 +16,24 @@ def carregar_css(nome_arquivo):
 
 carregar_css("style.css")
 
-# -----------------------------
-# CONFIGURAÇÃO DE USUÁRIO
-# -----------------------------
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "1234"
 
-# -----------------------------
-# CONTROLE DE SESSÃO
-# -----------------------------
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
-# -----------------------------
-# FUNÇÃO DE LOGIN
-# -----------------------------
+
 def tela_login():
-    st.title("Área de login do Sistema")
-    st.subheader("Faça login para acessar o site")
+    st.markdown('<div class="top-bar">Sistema Inteligente de Vendas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    st.markdown("<h1>🔐 Área de Login</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitle'>Entre para acessar o dashboard de análise de vendas e estoque.</p>", unsafe_allow_html=True)
 
     usuario = st.text_input("Usuário")
     senha = st.text_input("Senha", type="password")
 
-    if st.button("Entrar"):
+    if st.button("Entrar", use_container_width=True):
         if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
             st.session_state.logado = True
             st.success("Login realizado com sucesso.")
@@ -40,141 +41,225 @@ def tela_login():
         else:
             st.error("Usuário ou senha inválidos.")
 
-# -----------------------------
-# FUNÇÃO DE LOGOUT
-# -----------------------------
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def botao_logout():
-    if st.sidebar.button("Sair"):
+    st.sidebar.markdown("## Painel")
+    if st.sidebar.button("Sair do sistema", use_container_width=True):
         st.session_state.logado = False
         st.rerun()
 
-# -----------------------------
-# VALIDAÇÃO DO CSV
-# -----------------------------
-def validar_csv(df):
-    colunas_necessarias = ["data", "produto", "quantidade", "preco", "estoque_atual"]
-    faltando = [col for col in colunas_necessarias if col not in df.columns]
 
-    if faltando:
-        st.error(f"O arquivo não contém as colunas obrigatórias: {faltando}")
-        return None
-
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    df["quantidade"] = pd.to_numeric(df["quantidade"], errors="coerce")
-    df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
-    df["estoque_atual"] = pd.to_numeric(df["estoque_atual"], errors="coerce")
-
-    df = df.dropna(subset=["data", "produto", "quantidade", "preco", "estoque_atual"])
-
-    if df.empty:
-        st.error("O arquivo ficou vazio após a limpeza dos dados.")
-        return None
-
-    return df
-
-# -----------------------------
-# DASHBOARD PRINCIPAL
-# -----------------------------
 def dashboard():
-    st.title("Dashboard de Vendas e Estoque")
-    st.write("Área protegida com upload seguro de arquivo CSV.")
+    st.markdown('<div class="top-bar">📊 Dashboard Inteligente de Vendas</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva, previsão de vendas e sugestão de reposição de estoque.</div>',
+        unsafe_allow_html=True
+    )
 
     botao_logout()
 
-    st.markdown("### Envie o arquivo CSV")
-    arquivo = st.file_uploader("Selecione um arquivo CSV", type=["csv"])
+    st.sidebar.markdown("### Upload do arquivo")
+    arquivo = st.sidebar.file_uploader("Selecione um arquivo CSV", type=["csv"])
 
-    st.markdown("#### Formato esperado do arquivo")
-    st.code(
+    st.sidebar.markdown("### Formato esperado")
+    st.sidebar.code(
         "data,produto,quantidade,preco,estoque_atual\n"
         "2025-01-01,Arroz,10,5.50,30\n"
         "2025-01-01,Feijao,8,7.00,20"
     )
 
-    if arquivo is not None:
-        try:
-            df = pd.read_csv(arquivo)
-        except Exception as e:
-            st.error(f"Erro ao ler o arquivo: {e}")
-            return
+    if arquivo is None:
+        st.info("Envie um arquivo CSV pela barra lateral para começar.")
+        return
 
-        df = validar_csv(df)
-        if df is None:
-            return
+    try:
+        df = pd.read_csv(arquivo)
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo: {e}")
+        return
 
-        df["semana"] = df["data"].dt.isocalendar().week.astype(int)
-        df["faturamento"] = df["quantidade"] * df["preco"]
+    resultado = processar_dados(df)
 
-        st.subheader("Prévia dos dados")
-        st.dataframe(df)
+    if not resultado["sucesso"]:
+        st.error(resultado["erro"])
+        return
 
-        total_vendido = df["quantidade"].sum()
-        total_faturado = df["faturamento"].sum()
-        total_produtos = df["produto"].nunique()
+    df_limpo = resultado["df_limpo"]
+    mais_vendidos = resultado["mais_vendidos"]
+    faturamento_produto = resultado["faturamento_produto"]
+    vendas_semanais = resultado["vendas_semanais"]
+    top_por_semana = resultado["top_por_semana"]
+    df_previsoes = resultado["df_previsoes"]
+    reposicao = resultado["reposicao"]
+    mae = resultado["mae"]
+    rmse = resultado["rmse"]
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total vendido", int(total_vendido))
-        c2.metric("Faturamento total", f"R$ {total_faturado:,.2f}")
-        c3.metric("Produtos diferentes", int(total_produtos))
+    produtos = ["Todos"] + sorted(df_limpo["produto"].unique().tolist())
+    produto_escolhido = st.sidebar.selectbox("Filtrar produto", produtos)
 
-        st.subheader("Produtos mais vendidos")
-        mais_vendidos = df.groupby("produto")["quantidade"].sum().sort_values(ascending=False)
-        st.dataframe(mais_vendidos.reset_index())
-
-        fig1, ax1 = plt.subplots(figsize=(8, 4))
-        mais_vendidos.plot(kind="bar", ax=ax1)
-        ax1.set_title("Produtos mais vendidos")
-        ax1.set_xlabel("Produto")
-        ax1.set_ylabel("Quantidade")
-        st.pyplot(fig1)
-
-        st.subheader("Vendas por semana")
-        vendas_semanais = df.groupby("semana")["quantidade"].sum()
-
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        vendas_semanais.plot(marker="o", ax=ax2)
-        ax2.set_title("Quantidade vendida por semana")
-        ax2.set_xlabel("Semana")
-        ax2.set_ylabel("Quantidade")
-        ax2.grid(True)
-        st.pyplot(fig2)
-
-        st.subheader("Produto mais vendido por semana")
-        top_por_semana = (
-            df.groupby(["semana", "produto"])["quantidade"]
-            .sum()
-            .reset_index()
-        )
-        top_por_semana = top_por_semana.loc[top_por_semana.groupby("semana")["quantidade"].idxmax()]
-        st.dataframe(top_por_semana)
-
-        st.subheader("Sugestão de reposição de estoque")
-        media_semanal = (
-            df.groupby(["produto", "semana"])["quantidade"]
-            .sum()
-            .reset_index()
-            .groupby("produto")["quantidade"]
-            .mean()
-            .reset_index()
-        )
-        media_semanal.columns = ["produto", "media_venda_semanal"]
-
-        estoque_produto = df.groupby("produto")["estoque_atual"].last().reset_index()
-
-        reposicao = pd.merge(media_semanal, estoque_produto, on="produto", how="left")
-        reposicao["estoque_ideal"] = (reposicao["media_venda_semanal"] * 1.2).round()
-        reposicao["quantidade_repor"] = (
-            reposicao["estoque_ideal"] - reposicao["estoque_atual"]
-        ).clip(lower=0).round()
-
-        st.dataframe(reposicao.sort_values("quantidade_repor", ascending=False))
-
+    if produto_escolhido != "Todos":
+        df_filtrado = df_limpo[df_limpo["produto"] == produto_escolhido].copy()
     else:
-        st.info("Faça login e envie um arquivo CSV para começar.")
+        df_filtrado = df_limpo.copy()
 
-# -----------------------------
-# FLUXO PRINCIPAL
-# -----------------------------
+    if df_filtrado.empty:
+        st.warning("Nenhum dado encontrado para esse filtro.")
+        return
+
+    total_vendido = int(df_filtrado["quantidade"].sum())
+    total_faturado = float(df_filtrado["faturamento"].sum())
+    total_produtos = int(df_filtrado["produto"].nunique())
+    estoque_medio = float(df_filtrado["estoque_atual"].mean())
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Total vendido", f"{total_vendido}")
+    with c2:
+        st.metric("Faturamento", f"R$ {total_faturado:,.2f}")
+    with c3:
+        st.metric("Produtos únicos", f"{total_produtos}")
+    with c4:
+        st.metric("Estoque médio", f"{estoque_medio:.1f}")
+
+    aba1, aba2, aba3, aba4, aba5 = st.tabs(
+        ["Base", "Análise Geral", "Semanal", "Previsão", "Estoque"]
+    )
+
+    with aba1:
+        st.subheader("Prévia dos dados")
+        st.dataframe(df_filtrado, use_container_width=True)
+
+    with aba2:
+        st.subheader("Produtos mais vendidos")
+        if produto_escolhido == "Todos":
+            tabela_mais_vendidos = mais_vendidos.reset_index()
+            tabela_faturamento = faturamento_produto.reset_index()
+        else:
+            tabela_mais_vendidos = (
+                df_filtrado.groupby("produto")["quantidade"]
+                .sum()
+                .sort_values(ascending=False)
+                .reset_index()
+            )
+            tabela_faturamento = (
+                df_filtrado.groupby("produto")["faturamento"]
+                .sum()
+                .sort_values(ascending=False)
+                .reset_index()
+            )
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown("### Ranking por quantidade")
+            st.dataframe(tabela_mais_vendidos, use_container_width=True)
+
+            fig1, ax1 = plt.subplots(figsize=(8, 4))
+            tabela_mais_vendidos.set_index("produto")["quantidade"].plot(kind="bar", ax=ax1)
+            ax1.set_title("Produtos mais vendidos")
+            ax1.set_xlabel("Produto")
+            ax1.set_ylabel("Quantidade")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig1)
+
+        with col_b:
+            st.markdown("### Ranking por faturamento")
+            st.dataframe(tabela_faturamento, use_container_width=True)
+
+            fig2, ax2 = plt.subplots(figsize=(8, 4))
+            tabela_faturamento.set_index("produto")["faturamento"].plot(kind="bar", ax=ax2)
+            ax2.set_title("Faturamento por produto")
+            ax2.set_xlabel("Produto")
+            ax2.set_ylabel("Faturamento")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig2)
+
+    with aba3:
+        st.subheader("Produtos mais vendidos por semana")
+
+        if produto_escolhido == "Todos":
+            tabela_semanal = vendas_semanais.copy()
+            tabela_top_semana = top_por_semana.copy()
+        else:
+            tabela_semanal = (
+                df_filtrado.groupby(["semana", "produto"])["quantidade"]
+                .sum()
+                .reset_index()
+                .sort_values(["semana", "quantidade"], ascending=[True, False])
+            )
+            tabela_top_semana = tabela_semanal.loc[
+                tabela_semanal.groupby("semana")["quantidade"].idxmax()
+            ]
+
+        st.dataframe(tabela_top_semana, use_container_width=True)
+
+        vendas_por_semana = df_filtrado.groupby("semana")["quantidade"].sum()
+
+        fig3, ax3 = plt.subplots(figsize=(10, 4))
+        vendas_por_semana.plot(marker="o", ax=ax3)
+        ax3.set_title("Quantidade vendida por semana")
+        ax3.set_xlabel("Semana")
+        ax3.set_ylabel("Quantidade")
+        ax3.grid(True)
+        plt.tight_layout()
+        st.pyplot(fig3)
+
+    with aba4:
+        st.subheader("Previsão de vendas futuras")
+
+        if produto_escolhido != "Todos":
+            previsoes_filtradas = df_previsoes[df_previsoes["produto"] == produto_escolhido]
+        else:
+            previsoes_filtradas = df_previsoes
+
+        p1, p2 = st.columns(2)
+        with p1:
+            st.metric("MAE", f"{mae:.2f}")
+        with p2:
+            st.metric("RMSE", f"{rmse:.2f}")
+
+        st.dataframe(
+            previsoes_filtradas.sort_values("quantidade_prevista", ascending=False),
+            use_container_width=True
+        )
+
+        fig4, ax4 = plt.subplots(figsize=(10, 4))
+        previsoes_filtradas.set_index("produto")["quantidade_prevista"].plot(kind="bar", ax=ax4)
+        ax4.set_title("Quantidade prevista por produto")
+        ax4.set_xlabel("Produto")
+        ax4.set_ylabel("Quantidade prevista")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        st.pyplot(fig4)
+
+    with aba5:
+        st.subheader("Sugestão de reposição de estoque")
+
+        if produto_escolhido != "Todos":
+            reposicao_filtrada = reposicao[reposicao["produto"] == produto_escolhido]
+        else:
+            reposicao_filtrada = reposicao
+
+        st.dataframe(
+            reposicao_filtrada.sort_values("quantidade_repor", ascending=False),
+            use_container_width=True
+        )
+
+        fig5, ax5 = plt.subplots(figsize=(10, 4))
+        reposicao_filtrada.set_index("produto")["quantidade_repor"].plot(kind="bar", ax=ax5)
+        ax5.set_title("Quantidade sugerida para reposição")
+        ax5.set_xlabel("Produto")
+        ax5.set_ylabel("Quantidade")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        st.pyplot(fig5)
+
+
 if st.session_state.logado:
     dashboard()
 else:

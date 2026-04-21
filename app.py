@@ -10,9 +10,11 @@ st.set_page_config(
     layout="wide"
 )
 
+
 def carregar_css(nome_arquivo):
     with open(nome_arquivo, "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
 
 carregar_css("style.css")
 
@@ -28,7 +30,10 @@ def tela_login():
     st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.markdown("<h1>🔐 Área de Login</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Entre para acessar o dashboard de análise de vendas e estoque.</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='subtitle'>Entre para acessar o dashboard de análise de vendas e estoque.</p>",
+        unsafe_allow_html=True
+    )
 
     usuario = st.text_input("Usuário")
     senha = st.text_input("Senha", type="password")
@@ -81,12 +86,16 @@ def dashboard():
         st.error(f"Erro ao ler o arquivo: {e}")
         return
 
-    if resultado.get("faltantes"):
-    st.warning(f"O sistema adaptou automaticamente as colunas faltantes: {resultado['faltantes']}")
+    resultado = processar_dados(df)
 
     if not resultado["sucesso"]:
         st.error(resultado["erro"])
         return
+
+    if resultado.get("faltantes"):
+        st.warning(
+            f"O sistema adaptou automaticamente as colunas faltantes: {resultado['faltantes']}"
+        )
 
     df_limpo = resultado["df_limpo"]
     mais_vendidos = resultado["mais_vendidos"]
@@ -135,6 +144,7 @@ def dashboard():
 
     with aba2:
         st.subheader("Produtos mais vendidos")
+
         if produto_escolhido == "Todos":
             tabela_mais_vendidos = mais_vendidos.reset_index()
             tabela_faturamento = faturamento_produto.reset_index()
@@ -229,14 +239,15 @@ def dashboard():
             use_container_width=True
         )
 
-        fig4, ax4 = plt.subplots(figsize=(10, 4))
-        previsoes_filtradas.set_index("produto")["quantidade_prevista"].plot(kind="bar", ax=ax4)
-        ax4.set_title("Quantidade prevista por produto")
-        ax4.set_xlabel("Produto")
-        ax4.set_ylabel("Quantidade prevista")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        st.pyplot(fig4)
+        if not previsoes_filtradas.empty:
+            fig4, ax4 = plt.subplots(figsize=(10, 4))
+            previsoes_filtradas.set_index("produto")["quantidade_prevista"].plot(kind="bar", ax=ax4)
+            ax4.set_title("Quantidade prevista por produto")
+            ax4.set_xlabel("Produto")
+            ax4.set_ylabel("Quantidade prevista")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig4)
 
     with aba5:
         st.subheader("Sugestão de reposição de estoque")
@@ -251,14 +262,15 @@ def dashboard():
             use_container_width=True
         )
 
-        fig5, ax5 = plt.subplots(figsize=(10, 4))
-        reposicao_filtrada.set_index("produto")["quantidade_repor"].plot(kind="bar", ax=ax5)
-        ax5.set_title("Quantidade sugerida para reposição")
-        ax5.set_xlabel("Produto")
-        ax5.set_ylabel("Quantidade")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        st.pyplot(fig5)
+        if not reposicao_filtrada.empty:
+            fig5, ax5 = plt.subplots(figsize=(10, 4))
+            reposicao_filtrada.set_index("produto")["quantidade_repor"].plot(kind="bar", ax=ax5)
+            ax5.set_title("Quantidade sugerida para reposição")
+            ax5.set_xlabel("Produto")
+            ax5.set_ylabel("Quantidade")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig5)
 
 
 if st.session_state.logado:

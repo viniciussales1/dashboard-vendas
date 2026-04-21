@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from preventivo import processar_dados
 from relatorio import gerar_pdf
+from recomendacoes import gerar_recomendacoes
 
 st.set_page_config(
     page_title="Análise Preditiva + Análise Descritiva",

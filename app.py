@@ -92,6 +92,11 @@ def dashboard():
     if not resultado["sucesso"]:
         st.error(resultado["erro"])
         return
+        
+    if resultado.get("colunas_reconhecidas"):
+    st.info(
+        f"Colunas reconhecidas automaticamente: {resultado['colunas_reconhecidas']}"
+    )
 
     if resultado.get("faltantes"):
         st.warning(

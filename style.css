@@ -1,0 +1,135 @@
+/* Fundo geral */
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f172a, #111827);
+    color: #f8fafc;
+}
+
+/* Área principal */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+/* Barra lateral */
+section[data-testid="stSidebar"] {
+    background: #111827;
+    border-right: 1px solid #334155;
+}
+
+/* Topo */
+.top-bar {
+    background: linear-gradient(90deg, #1d4ed8, #2563eb);
+    color: white;
+    padding: 18px 24px;
+    border-radius: 14px;
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+/* Textos */
+h1, h2, h3, h4, h5, h6 {
+    color: #f8fafc !important;
+}
+
+p, label, div, span {
+    color: #e2e8f0;
+}
+
+/* Caixa informativa */
+.info-box {
+    background: rgba(30, 41, 59, 0.85);
+    border: 1px solid #334155;
+    padding: 16px 18px;
+    border-radius: 14px;
+    margin-bottom: 18px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+/* Login */
+.login-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 30px;
+}
+
+.login-card {
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid #334155;
+    padding: 30px;
+    border-radius: 18px;
+    width: 100%;
+    max-width: 520px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.subtitle {
+    color: #cbd5e1;
+    margin-bottom: 18px;
+}
+
+/* Inputs */
+input {
+    border-radius: 10px !important;
+}
+
+/* Botões */
+button[kind="primary"] {
+    background: linear-gradient(90deg, #2563eb, #1d4ed8) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    transition: 0.3s ease;
+    font-weight: 600 !important;
+}
+
+button[kind="primary"]:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+/* Métricas */
+[data-testid="stMetric"] {
+    background: rgba(30, 41, 59, 0.9);
+    border: 1px solid #334155;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
+
+/* Dataframe */
+div[data-testid="stDataFrame"] {
+    border: 1px solid #334155;
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.75);
+}
+
+/* Upload */
+div[data-testid="stFileUploader"] {
+    border: 2px dashed #475569;
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(15, 23, 42, 0.4);
+}
+
+/* Tabs */
+button[data-baseweb="tab"] {
+    background: rgba(30, 41, 59, 0.8);
+    border-radius: 10px 10px 0 0;
+    margin-right: 4px;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    background: #2563eb;
+    color: white;
+}
+
+/* Alertas */
+[data-testid="stAlert"] {
+    border-radius: 12px;
+}

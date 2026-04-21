@@ -62,7 +62,7 @@ def botao_logout():
 def dashboard():
     st.markdown('<div class="top-bar">📊 Dashboard Inteligente de Vendas</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva, previsão de vendas e sugestão de reposição de estoque.</div>',
+        '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva, previsão de vendas, sugestões de estoque e recomendações automáticas.</div>',
         unsafe_allow_html=True
     )
 
@@ -93,11 +93,11 @@ def dashboard():
     if not resultado["sucesso"]:
         st.error(resultado["erro"])
         return
-        
+
     if resultado.get("colunas_reconhecidas"):
         st.info(
-        f"Colunas reconhecidas automaticamente: {resultado['colunas_reconhecidas']}"
-    )
+            f"Colunas reconhecidas automaticamente: {resultado['colunas_reconhecidas']}"
+        )
 
     if resultado.get("faltantes"):
         st.warning(
@@ -130,6 +130,23 @@ def dashboard():
     total_faturado = float(df_filtrado["faturamento"].sum())
     total_produtos = int(df_filtrado["produto"].nunique())
     estoque_medio = float(df_filtrado["estoque_atual"].mean())
+
+    if produto_escolhido == "Todos":
+        mais_vendidos_filtrado = mais_vendidos
+        reposicao_filtrada_base = reposicao
+    else:
+        mais_vendidos_filtrado = (
+            df_filtrado.groupby("produto")["quantidade"]
+            .sum()
+            .sort_values(ascending=False)
+        )
+        reposicao_filtrada_base = reposicao[reposicao["produto"] == produto_escolhido]
+
+    recomendacoes = gerar_recomendacoes(
+        df_filtrado,
+        reposicao_filtrada_base,
+        mais_vendidos_filtrado
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -166,8 +183,8 @@ def dashboard():
         mime="application/pdf"
     )
 
-    aba1, aba2, aba3, aba4, aba5 = st.tabs(
-        ["Base", "Análise Geral", "Semanal", "Previsão", "Estoque"]
+    aba1, aba2, aba3, aba4, aba5, aba6 = st.tabs(
+        ["Base", "Análise Geral", "Semanal", "Previsão", "Estoque", "Recomendações"]
     )
 
     with aba1:
@@ -226,7 +243,6 @@ def dashboard():
         st.subheader("Produtos mais vendidos por semana")
 
         if produto_escolhido == "Todos":
-            tabela_semanal = vendas_semanais.copy()
             tabela_top_semana = top_por_semana.copy()
         else:
             tabela_semanal = (
@@ -309,9 +325,9 @@ def dashboard():
 
         if recomendacoes:
             for rec in recomendacoes:
-            st.success(rec)
-    else:
-        st.info("Não foi possível gerar recomendações para os dados enviados.")
+                st.success(rec)
+        else:
+            st.info("Não foi possível gerar recomendações para os dados enviados.")
 
 
 if st.session_state.logado:

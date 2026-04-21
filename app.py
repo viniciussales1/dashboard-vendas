@@ -2,6 +2,21 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from relatorio import gerar_pdf
+st.subheader("📄 Gerar relatório")
+
+pdf = gerar_pdf(
+    total_vendido,
+    total_faturado,
+    mais_vendidos.reset_index()
+)
+
+st.download_button(
+    label="Baixar relatório em PDF",
+    data=pdf,
+    file_name="relatorio_vendas.pdf",
+    mime="application/pdf"
+)
 from preventivo import processar_dados
 
 st.set_page_config(

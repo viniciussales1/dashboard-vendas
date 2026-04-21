@@ -22,6 +22,8 @@ carregar_css("style.css")
 
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "1234"
+LIMITE_ARQUIVO_MB = 100
+LIMITE_ARQUIVO_BYTES = LIMITE_ARQUIVO_MB * 1024 * 1024
 
 if "logado" not in st.session_state:
     st.session_state.logado = False
@@ -123,7 +125,19 @@ def acumular_series(dicionario, serie):
         dicionario[chave] = dicionario.get(chave, 0) + valor
 
 
-def primeira_passagem_metadata(arquivo, chunksize=100_000):
+def atualizar_progresso(progress_bar, status_text, percentual, mensagem):
+    percentual = max(0, min(100, int(percentual)))
+    progress_bar.progress(percentual)
+    status_text.markdown(f"**{mensagem}** ({percentual}%)")
+
+
+def primeira_passagem_metadata(
+    arquivo,
+    chunksize=100_000,
+    total_bytes=None,
+    progress_bar=None,
+    status_text=None
+):
     arquivo.seek(0)
 
     data_min = None
@@ -131,6 +145,9 @@ def primeira_passagem_metadata(arquivo, chunksize=100_000):
     produtos = set()
     colunas_reconhecidas = {}
     faltantes = set()
+
+    if progress_bar and status_text:
+        atualizar_progresso(progress_bar, status_text, 0, "Lendo metadados do arquivo")
 
     for chunk in pd.read_csv(arquivo, chunksize=chunksize):
         chunk, faltantes_chunk, reconhecidas_chunk = preparar_chunk(chunk)
@@ -142,20 +159,26 @@ def primeira_passagem_metadata(arquivo, chunksize=100_000):
         for item in faltantes_chunk:
             faltantes.add(item)
 
-        if chunk.empty:
-            continue
+        if not chunk.empty:
+            chunk_min = chunk["data"].min()
+            chunk_max = chunk["data"].max()
 
-        chunk_min = chunk["data"].min()
-        chunk_max = chunk["data"].max()
+            if data_min is None or chunk_min < data_min:
+                data_min = chunk_min
+            if data_max is None or chunk_max > data_max:
+                data_max = chunk_max
 
-        if data_min is None or chunk_min < data_min:
-            data_min = chunk_min
-        if data_max is None or chunk_max > data_max:
-            data_max = chunk_max
+            produtos.update(chunk["produto"].dropna().unique().tolist())
 
-        produtos.update(chunk["produto"].dropna().unique().tolist())
+        if total_bytes and progress_bar and status_text:
+            lido = arquivo.tell()
+            percentual = (lido / total_bytes) * 100
+            atualizar_progresso(progress_bar, status_text, percentual, "Lendo metadados do arquivo")
 
     arquivo.seek(0)
+
+    if progress_bar and status_text:
+        atualizar_progresso(progress_bar, status_text, 100, "Metadados carregados")
 
     return {
         "data_min": data_min,
@@ -166,7 +189,17 @@ def primeira_passagem_metadata(arquivo, chunksize=100_000):
     }
 
 
-def processar_em_chunks(arquivo, data_inicial, data_final, produto_escolhido, chunksize=100_000, limite_amostra_ml=200_000):
+def processar_em_chunks(
+    arquivo,
+    data_inicial,
+    data_final,
+    produto_escolhido,
+    chunksize=100_000,
+    limite_amostra_ml=200_000,
+    total_bytes=None,
+    progress_bar=None,
+    status_text=None
+):
     arquivo.seek(0)
 
     total_vendido = 0
@@ -182,10 +215,17 @@ def processar_em_chunks(arquivo, data_inicial, data_final, produto_escolhido, ch
     amostra_ml_partes = []
     amostra_ml_restante = limite_amostra_ml
 
+    if progress_bar and status_text:
+        atualizar_progresso(progress_bar, status_text, 0, "Processando dados do arquivo")
+
     for chunk in pd.read_csv(arquivo, chunksize=chunksize):
         chunk, _, _ = preparar_chunk(chunk)
 
         if chunk.empty:
+            if total_bytes and progress_bar and status_text:
+                lido = arquivo.tell()
+                percentual = (lido / total_bytes) * 100
+                atualizar_progresso(progress_bar, status_text, percentual, "Processando dados do arquivo")
             continue
 
         chunk["ano"] = chunk["data"].dt.year
@@ -203,42 +243,48 @@ def processar_em_chunks(arquivo, data_inicial, data_final, produto_escolhido, ch
         if produto_escolhido != "Todos":
             chunk = chunk[chunk["produto"] == produto_escolhido]
 
-        if chunk.empty:
-            continue
+        if not chunk.empty:
+            total_vendido += int(chunk["quantidade"].sum())
+            total_faturado += float(chunk["faturamento"].sum())
 
-        total_vendido += int(chunk["quantidade"].sum())
-        total_faturado += float(chunk["faturamento"].sum())
+            acumular_series(
+                quantidade_por_produto,
+                chunk.groupby("produto")["quantidade"].sum()
+            )
 
-        acumular_series(
-            quantidade_por_produto,
-            chunk.groupby("produto")["quantidade"].sum()
-        )
+            acumular_series(
+                faturamento_por_produto,
+                chunk.groupby("produto")["faturamento"].sum()
+            )
 
-        acumular_series(
-            faturamento_por_produto,
-            chunk.groupby("produto")["faturamento"].sum()
-        )
+            acumular_series(
+                quantidade_por_semana_produto,
+                chunk.groupby(["semana", "produto"])["quantidade"].sum()
+            )
 
-        acumular_series(
-            quantidade_por_semana_produto,
-            chunk.groupby(["semana", "produto"])["quantidade"].sum()
-        )
+            estoque_chunk = chunk.groupby("produto")["estoque_atual"].last()
+            for produto, estoque in estoque_chunk.items():
+                ultimo_estoque_por_produto[produto] = estoque
 
-        estoque_chunk = chunk.groupby("produto")["estoque_atual"].last()
-        for produto, estoque in estoque_chunk.items():
-            ultimo_estoque_por_produto[produto] = estoque
+            if preview_restante > 0:
+                parte_preview = chunk.head(preview_restante)
+                preview_partes.append(parte_preview)
+                preview_restante -= len(parte_preview)
 
-        if preview_restante > 0:
-            parte_preview = chunk.head(preview_restante)
-            preview_partes.append(parte_preview)
-            preview_restante -= len(parte_preview)
+            if amostra_ml_restante > 0:
+                parte_amostra = chunk.head(amostra_ml_restante)
+                amostra_ml_partes.append(parte_amostra)
+                amostra_ml_restante -= len(parte_amostra)
 
-        if amostra_ml_restante > 0:
-            parte_amostra = chunk.head(amostra_ml_restante)
-            amostra_ml_partes.append(parte_amostra)
-            amostra_ml_restante -= len(parte_amostra)
+        if total_bytes and progress_bar and status_text:
+            lido = arquivo.tell()
+            percentual = (lido / total_bytes) * 100
+            atualizar_progresso(progress_bar, status_text, percentual, "Processando dados do arquivo")
 
     arquivo.seek(0)
+
+    if progress_bar and status_text:
+        atualizar_progresso(progress_bar, status_text, 100, "Processamento concluído")
 
     df_preview = pd.concat(preview_partes, ignore_index=True) if preview_partes else pd.DataFrame()
     df_amostra_ml = pd.concat(amostra_ml_partes, ignore_index=True) if amostra_ml_partes else pd.DataFrame()
@@ -429,13 +475,29 @@ def dashboard():
         return
 
     tamanho_mb = arquivo.size / (1024 * 1024)
-    if tamanho_mb > 100:
-        st.error(f"Arquivo muito grande ({tamanho_mb:.2f} MB). Limite permitido: 100 MB.")
+    if arquivo.size > LIMITE_ARQUIVO_BYTES:
+        st.error(
+            f"Arquivo muito grande ({tamanho_mb:.2f} MB). "
+            f"O limite permitido é de {LIMITE_ARQUIVO_MB} MB."
+        )
         return
 
+    st.sidebar.success(f"Arquivo carregado: {tamanho_mb:.2f} MB / {LIMITE_ARQUIVO_MB} MB")
+
+    progresso_metadata = st.progress(0)
+    status_metadata = st.empty()
+
     try:
-        metadata = primeira_passagem_metadata(arquivo)
+        metadata = primeira_passagem_metadata(
+            arquivo=arquivo,
+            chunksize=100_000,
+            total_bytes=arquivo.size,
+            progress_bar=progresso_metadata,
+            status_text=status_metadata
+        )
     except Exception as e:
+        progresso_metadata.empty()
+        status_metadata.empty()
         st.error(f"Erro ao ler o arquivo: {e}")
         return
 
@@ -450,6 +512,8 @@ def dashboard():
         )
 
     if metadata["data_min"] is None or metadata["data_max"] is None:
+        progresso_metadata.empty()
+        status_metadata.empty()
         st.error("Não foi possível identificar dados válidos no arquivo.")
         return
 
@@ -472,6 +536,9 @@ def dashboard():
     produtos = ["Todos"] + metadata["produtos"] if metadata["produtos"] else ["Todos"]
     produto_escolhido = st.sidebar.selectbox("Filtrar produto", produtos)
 
+    progresso_processamento = st.progress(0)
+    status_processamento = st.empty()
+
     try:
         resultado = processar_em_chunks(
             arquivo=arquivo,
@@ -479,11 +546,21 @@ def dashboard():
             data_final=data_final,
             produto_escolhido=produto_escolhido,
             chunksize=100_000,
-            limite_amostra_ml=200_000
+            limite_amostra_ml=200_000,
+            total_bytes=arquivo.size,
+            progress_bar=progresso_processamento,
+            status_text=status_processamento
         )
     except Exception as e:
+        progresso_processamento.empty()
+        status_processamento.empty()
         st.error(f"Erro ao processar o arquivo: {e}")
         return
+
+    progresso_metadata.empty()
+    status_metadata.empty()
+    progresso_processamento.empty()
+    status_processamento.empty()
 
     df_preview = resultado["df_preview"]
     df_amostra_ml = resultado["df_amostra_ml"]
@@ -499,6 +576,7 @@ def dashboard():
         st.warning("Nenhum dado encontrado para o período ou filtro selecionado.")
         return
 
+    st.success("Arquivo processado com sucesso.")
     st.info(
         f"Período selecionado: {data_inicial.strftime('%d/%m/%Y')} até {data_final.strftime('%d/%m/%Y')}"
     )
@@ -514,7 +592,6 @@ def dashboard():
         reposicao=reposicao
     )
 
-    # Previsão: amostra controlada para não derrubar o servidor
     mae = 0.0
     rmse = 0.0
     df_previsoes = pd.DataFrame(columns=["produto", "data_previsao", "quantidade_prevista"])

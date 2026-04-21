@@ -81,7 +81,8 @@ def dashboard():
         st.error(f"Erro ao ler o arquivo: {e}")
         return
 
-    resultado = processar_dados(df)
+    if resultado.get("faltantes"):
+    st.warning(f"O sistema adaptou automaticamente as colunas faltantes: {resultado['faltantes']}")
 
     if not resultado["sucesso"]:
         st.error(resultado["erro"])

@@ -1,12 +1,68 @@
 import pandas as pd
 import numpy as np
+import re
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 
+def normalizar_nome_coluna(nome):
+    nome = str(nome).strip().lower()
+    nome = nome.replace("ç", "c")
+    nome = nome.replace("ã", "a").replace("á", "a").replace("à", "a").replace("â", "a")
+    nome = nome.replace("é", "e").replace("ê", "e")
+    nome = nome.replace("í", "i")
+    nome = nome.replace("ó", "o").replace("ô", "o").replace("õ", "o")
+    nome = nome.replace("ú", "u")
+    nome = re.sub(r"[^a-z0-9]+", "_", nome)
+    nome = re.sub(r"_+", "_", nome).strip("_")
+    return nome
+
+
+def reconhecer_colunas(df):
+    mapa_sinonimos = {
+        "data": [
+            "data", "dt", "dia", "data_venda", "dt_venda", "data_da_venda",
+            "data_movimento", "data_pedido", "date"
+        ],
+        "produto": [
+            "produto", "item", "nome_produto", "descricao", "descricao_produto",
+            "produto_nome", "mercadoria", "product", "nome"
+        ],
+        "quantidade": [
+            "quantidade", "qtd", "quant", "qte", "quantidade_vendida",
+            "qtde", "units", "unidades", "volume"
+        ],
+        "preco": [
+            "preco", "preco_unitario", "valor", "valor_unitario",
+            "preco_venda", "price", "unit_price", "precounitario"
+        ],
+        "estoque_atual": [
+            "estoque_atual", "estoque", "saldo_estoque", "qtd_estoque",
+            "estoque_disponivel", "inventory", "stock"
+        ]
+    }
+
+    colunas_originais = list(df.columns)
+    colunas_normalizadas = {col: normalizar_nome_coluna(col) for col in colunas_originais}
+
+    renomear = {}
+    encontradas = {}
+
+    for coluna_padrao, sinonimos in mapa_sinonimos.items():
+        for original, normalizada in colunas_normalizadas.items():
+            if normalizada == coluna_padrao or normalizada in sinonimos:
+                renomear[original] = coluna_padrao
+                encontradas[coluna_padrao] = original
+                break
+
+    df = df.rename(columns=renomear)
+    return df, encontradas
+
+
 def validar_csv(df):
     df = df.copy()
+    df, encontradas = reconhecer_colunas(df)
     faltantes = []
 
     if "data" not in df.columns:
@@ -39,18 +95,19 @@ def validar_csv(df):
 
     df = df.dropna(subset=["data"])
 
-    return df, faltantes
+    return df, faltantes, encontradas
 
 
 def processar_dados(df):
     try:
-        df, faltantes = validar_csv(df)
+        df, faltantes, encontradas = validar_csv(df)
 
         if df is None or df.empty:
             return {
                 "sucesso": False,
                 "erro": "Erro ao processar arquivo",
-                "faltantes": faltantes if "faltantes" in locals() else []
+                "faltantes": faltantes if "faltantes" in locals() else [],
+                "colunas_reconhecidas": encontradas if "encontradas" in locals() else {}
             }
 
         df["ano"] = df["data"].dt.year
@@ -178,6 +235,7 @@ def processar_dados(df):
             "sucesso": True,
             "erro": None,
             "faltantes": faltantes,
+            "colunas_reconhecidas": encontradas,
             "df_limpo": df,
             "mais_vendidos": mais_vendidos,
             "faturamento_produto": faturamento_produto,
@@ -193,5 +251,6 @@ def processar_dados(df):
         return {
             "sucesso": False,
             "erro": f"Erro ao processar os dados: {e}",
-            "faltantes": []
+            "faltantes": [],
+            "colunas_reconhecidas": {}
         }

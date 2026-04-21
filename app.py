@@ -304,6 +304,15 @@ def dashboard():
             plt.tight_layout()
             st.pyplot(fig5)
 
+    with aba6:
+        st.subheader("Área de Recomendações")
+
+        if recomendacoes:
+            for rec in recomendacoes:
+            st.success(rec)
+    else:
+        st.info("Não foi possível gerar recomendações para os dados enviados.")
+
 
 if st.session_state.logado:
     dashboard()

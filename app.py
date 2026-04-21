@@ -31,7 +31,7 @@ def tela_login():
     st.markdown('<div class="top-bar">Sistema Inteligente de Vendas</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    st.markdown("<h1>🔐 Área de Login</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>Área de Login</h1>", unsafe_allow_html=True)
     st.markdown(
         "<p class='subtitle'>Entre para acessar o dashboard de análise de vendas e estoque.</p>",
         unsafe_allow_html=True
@@ -60,7 +60,7 @@ def botao_logout():
 
 
 def dashboard():
-    st.markdown('<div class="top-bar">📊 Dashboard Inteligente de Vendas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="top-bar">Dashboard Inteligente de Vendas</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="info-box">Faça upload do arquivo CSV para gerar análise descritiva, previsão de vendas, sugestões de estoque e recomendações automáticas.</div>',
         unsafe_allow_html=True
@@ -105,48 +105,104 @@ def dashboard():
         )
 
     df_limpo = resultado["df_limpo"]
-    mais_vendidos = resultado["mais_vendidos"]
-    faturamento_produto = resultado["faturamento_produto"]
-    vendas_semanais = resultado["vendas_semanais"]
-    top_por_semana = resultado["top_por_semana"]
-    df_previsoes = resultado["df_previsoes"]
-    reposicao = resultado["reposicao"]
     mae = resultado["mae"]
     rmse = resultado["rmse"]
 
-    produtos = ["Todos"] + sorted(df_limpo["produto"].unique().tolist())
+    # Filtro de período
+    data_min = df_limpo["data"].min().date()
+    data_max = df_limpo["data"].max().date()
+
+    intervalo_datas = st.sidebar.date_input(
+        "Filtrar por período",
+        value=(data_min, data_max),
+        min_value=data_min,
+        max_value=data_max
+    )
+
+    if isinstance(intervalo_datas, tuple) and len(intervalo_datas) == 2:
+        data_inicial, data_final = intervalo_datas
+    else:
+        data_inicial = data_min
+        data_final = data_max
+
+    # Filtra primeiro por data
+    df_filtrado = df_limpo[
+        (df_limpo["data"].dt.date >= data_inicial) &
+        (df_limpo["data"].dt.date <= data_final)
+    ].copy()
+
+    produtos = ["Todos"] + sorted(df_filtrado["produto"].unique().tolist()) if not df_filtrado.empty else ["Todos"]
     produto_escolhido = st.sidebar.selectbox("Filtrar produto", produtos)
 
+    # Depois filtra por produto
     if produto_escolhido != "Todos":
-        df_filtrado = df_limpo[df_limpo["produto"] == produto_escolhido].copy()
-    else:
-        df_filtrado = df_limpo.copy()
+        df_filtrado = df_filtrado[df_filtrado["produto"] == produto_escolhido].copy()
 
     if df_filtrado.empty:
-        st.warning("Nenhum dado encontrado para esse filtro.")
+        st.warning("Nenhum dado encontrado para o período ou filtro selecionado.")
         return
+
+    st.info(
+        f"Período selecionado: {data_inicial.strftime('%d/%m/%Y')} até {data_final.strftime('%d/%m/%Y')}"
+    )
+
+    # Recalcular tudo com base no filtro aplicado
+    mais_vendidos = df_filtrado.groupby("produto")["quantidade"].sum().sort_values(ascending=False)
+
+    faturamento_produto = (
+        df_filtrado.groupby("produto")["faturamento"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    vendas_semanais = (
+        df_filtrado.groupby(["semana", "produto"])["quantidade"]
+        .sum()
+        .reset_index()
+        .sort_values(["semana", "quantidade"], ascending=[True, False])
+    )
+
+    top_por_semana = vendas_semanais.loc[
+        vendas_semanais.groupby("semana")["quantidade"].idxmax()
+    ] if not vendas_semanais.empty else pd.DataFrame(columns=["semana", "produto", "quantidade"])
+
+    reposicao = (
+        df_filtrado.groupby(["produto", "semana"])["quantidade"]
+        .sum()
+        .reset_index()
+        .groupby("produto")["quantidade"]
+        .mean()
+        .reset_index()
+    )
+    reposicao.columns = ["produto", "media_venda_semanal"]
+
+    estoque_produto = (
+        df_filtrado.groupby("produto")["estoque_atual"]
+        .last()
+        .reset_index()
+    )
+
+    reposicao = pd.merge(reposicao, estoque_produto, on="produto", how="left")
+    reposicao["estoque_ideal"] = (reposicao["media_venda_semanal"] * 1.2).round()
+    reposicao["quantidade_repor"] = (
+        reposicao["estoque_ideal"] - reposicao["estoque_atual"]
+    ).clip(lower=0).round()
+    reposicao = reposicao.sort_values("quantidade_repor", ascending=False)
+
+    df_previsoes = resultado["df_previsoes"]
+    if produto_escolhido != "Todos":
+        df_previsoes = df_previsoes[df_previsoes["produto"] == produto_escolhido]
+
+    recomendacoes = gerar_recomendacoes(
+        df_filtrado,
+        reposicao,
+        mais_vendidos
+    )
 
     total_vendido = int(df_filtrado["quantidade"].sum())
     total_faturado = float(df_filtrado["faturamento"].sum())
     total_produtos = int(df_filtrado["produto"].nunique())
     estoque_medio = float(df_filtrado["estoque_atual"].mean())
-
-    if produto_escolhido == "Todos":
-        mais_vendidos_filtrado = mais_vendidos
-        reposicao_filtrada_base = reposicao
-    else:
-        mais_vendidos_filtrado = (
-            df_filtrado.groupby("produto")["quantidade"]
-            .sum()
-            .sort_values(ascending=False)
-        )
-        reposicao_filtrada_base = reposicao[reposicao["produto"] == produto_escolhido]
-
-    recomendacoes = gerar_recomendacoes(
-        df_filtrado,
-        reposicao_filtrada_base,
-        mais_vendidos_filtrado
-    )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -158,17 +214,9 @@ def dashboard():
     with c4:
         st.metric("Estoque médio", f"{estoque_medio:.1f}")
 
-    st.subheader("📄 Gerar relatório em PDF")
+    st.subheader("Gerar relatório em PDF")
 
-    if produto_escolhido == "Todos":
-        tabela_pdf = mais_vendidos.reset_index()
-    else:
-        tabela_pdf = (
-            df_filtrado.groupby("produto")["quantidade"]
-            .sum()
-            .sort_values(ascending=False)
-            .reset_index()
-        )
+    tabela_pdf = mais_vendidos.reset_index()
 
     pdf = gerar_pdf(
         total_vendido=total_vendido,
@@ -194,22 +242,8 @@ def dashboard():
     with aba2:
         st.subheader("Produtos mais vendidos")
 
-        if produto_escolhido == "Todos":
-            tabela_mais_vendidos = mais_vendidos.reset_index()
-            tabela_faturamento = faturamento_produto.reset_index()
-        else:
-            tabela_mais_vendidos = (
-                df_filtrado.groupby("produto")["quantidade"]
-                .sum()
-                .sort_values(ascending=False)
-                .reset_index()
-            )
-            tabela_faturamento = (
-                df_filtrado.groupby("produto")["faturamento"]
-                .sum()
-                .sort_values(ascending=False)
-                .reset_index()
-            )
+        tabela_mais_vendidos = mais_vendidos.reset_index()
+        tabela_faturamento = faturamento_produto.reset_index()
 
         col_a, col_b = st.columns(2)
 
@@ -242,20 +276,7 @@ def dashboard():
     with aba3:
         st.subheader("Produtos mais vendidos por semana")
 
-        if produto_escolhido == "Todos":
-            tabela_top_semana = top_por_semana.copy()
-        else:
-            tabela_semanal = (
-                df_filtrado.groupby(["semana", "produto"])["quantidade"]
-                .sum()
-                .reset_index()
-                .sort_values(["semana", "quantidade"], ascending=[True, False])
-            )
-            tabela_top_semana = tabela_semanal.loc[
-                tabela_semanal.groupby("semana")["quantidade"].idxmax()
-            ]
-
-        st.dataframe(tabela_top_semana, use_container_width=True)
+        st.dataframe(top_por_semana, use_container_width=True)
 
         vendas_por_semana = df_filtrado.groupby("semana")["quantidade"].sum()
 
@@ -271,11 +292,6 @@ def dashboard():
     with aba4:
         st.subheader("Previsão de vendas futuras")
 
-        if produto_escolhido != "Todos":
-            previsoes_filtradas = df_previsoes[df_previsoes["produto"] == produto_escolhido]
-        else:
-            previsoes_filtradas = df_previsoes
-
         p1, p2 = st.columns(2)
         with p1:
             st.metric("MAE", f"{mae:.2f}")
@@ -283,13 +299,13 @@ def dashboard():
             st.metric("RMSE", f"{rmse:.2f}")
 
         st.dataframe(
-            previsoes_filtradas.sort_values("quantidade_prevista", ascending=False),
+            df_previsoes.sort_values("quantidade_prevista", ascending=False),
             use_container_width=True
         )
 
-        if not previsoes_filtradas.empty:
+        if not df_previsoes.empty:
             fig4, ax4 = plt.subplots(figsize=(10, 4))
-            previsoes_filtradas.set_index("produto")["quantidade_prevista"].plot(kind="bar", ax=ax4)
+            df_previsoes.set_index("produto")["quantidade_prevista"].plot(kind="bar", ax=ax4)
             ax4.set_title("Quantidade prevista por produto")
             ax4.set_xlabel("Produto")
             ax4.set_ylabel("Quantidade prevista")
@@ -300,19 +316,14 @@ def dashboard():
     with aba5:
         st.subheader("Sugestão de reposição de estoque")
 
-        if produto_escolhido != "Todos":
-            reposicao_filtrada = reposicao[reposicao["produto"] == produto_escolhido]
-        else:
-            reposicao_filtrada = reposicao
-
         st.dataframe(
-            reposicao_filtrada.sort_values("quantidade_repor", ascending=False),
+            reposicao.sort_values("quantidade_repor", ascending=False),
             use_container_width=True
         )
 
-        if not reposicao_filtrada.empty:
+        if not reposicao.empty:
             fig5, ax5 = plt.subplots(figsize=(10, 4))
-            reposicao_filtrada.set_index("produto")["quantidade_repor"].plot(kind="bar", ax=ax5)
+            reposicao.set_index("produto")["quantidade_repor"].plot(kind="bar", ax=ax5)
             ax5.set_title("Quantidade sugerida para reposição")
             ax5.set_xlabel("Produto")
             ax5.set_ylabel("Quantidade")

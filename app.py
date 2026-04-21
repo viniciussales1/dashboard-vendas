@@ -16,6 +16,6 @@ if arquivo is not None:
     try:
         df = pd.read_csv(arquivo)
         st.success("Arquivo carregado com sucesso.")
-        st.dataframe(df.head(20), use_container_width=True)
+        st.dataframe(df.head(20), width="stretch")
     except Exception as e:
         st.error(f"Erro ao ler o arquivo: {e}")

@@ -94,7 +94,7 @@ def dashboard():
         return
         
     if resultado.get("colunas_reconhecidas"):
-    st.info(
+        st.info(
         f"Colunas reconhecidas automaticamente: {resultado['colunas_reconhecidas']}"
     )
 

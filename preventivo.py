@@ -7,36 +7,30 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 def validar_csv(df):
     df = df.copy()
-
     faltantes = []
 
-    # DATA
     if "data" not in df.columns:
         df["data"] = pd.date_range(start="2025-01-01", periods=len(df))
         faltantes.append("data")
     else:
         df["data"] = pd.to_datetime(df["data"], errors="coerce")
 
-    # PRODUTO
     if "produto" not in df.columns:
         df["produto"] = "Produto Genérico"
         faltantes.append("produto")
 
-    # QUANTIDADE
     if "quantidade" not in df.columns:
         df["quantidade"] = 1
         faltantes.append("quantidade")
     else:
         df["quantidade"] = pd.to_numeric(df["quantidade"], errors="coerce").fillna(1)
 
-    # PREÇO
     if "preco" not in df.columns:
         df["preco"] = 0
         faltantes.append("preco")
     else:
         df["preco"] = pd.to_numeric(df["preco"], errors="coerce").fillna(0)
 
-    # ESTOQUE
     if "estoque_atual" not in df.columns:
         df["estoque_atual"] = 0
         faltantes.append("estoque_atual")
@@ -47,16 +41,18 @@ def validar_csv(df):
 
     return df, faltantes
 
+
 def processar_dados(df):
-    df, faltantes = validar_csv(df)
-
-if df is None:
-    return {
-        "sucesso": False,
-        "erro": "Erro ao processar arquivo"
-    }
-
     try:
+        df, faltantes = validar_csv(df)
+
+        if df is None or df.empty:
+            return {
+                "sucesso": False,
+                "erro": "Erro ao processar arquivo",
+                "faltantes": faltantes if "faltantes" in locals() else []
+            }
+
         df["ano"] = df["data"].dt.year
         df["mes"] = df["data"].dt.month
         df["dia"] = df["data"].dt.day
@@ -181,6 +177,7 @@ if df is None:
         return {
             "sucesso": True,
             "erro": None,
+            "faltantes": faltantes,
             "df_limpo": df,
             "mais_vendidos": mais_vendidos,
             "faturamento_produto": faturamento_produto,
@@ -195,5 +192,6 @@ if df is None:
     except Exception as e:
         return {
             "sucesso": False,
-            "erro": f"Erro ao processar os dados: {e}"
+            "erro": f"Erro ao processar os dados: {e}",
+            "faltantes": []
         }

@@ -2,22 +2,8 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from relatorio import gerar_pdf
-st.subheader("📄 Gerar relatório")
-
-pdf = gerar_pdf(
-    total_vendido,
-    total_faturado,
-    mais_vendidos.reset_index()
-)
-
-st.download_button(
-    label="Baixar relatório em PDF",
-    data=pdf,
-    file_name="relatorio_vendas.pdf",
-    mime="application/pdf"
-)
 from preventivo import processar_dados
+from relatorio import gerar_pdf
 
 st.set_page_config(
     page_title="Análise Preditiva + Análise Descritiva",
@@ -148,6 +134,31 @@ def dashboard():
         st.metric("Produtos únicos", f"{total_produtos}")
     with c4:
         st.metric("Estoque médio", f"{estoque_medio:.1f}")
+
+    st.subheader("📄 Gerar relatório em PDF")
+
+    if produto_escolhido == "Todos":
+        tabela_pdf = mais_vendidos.reset_index()
+    else:
+        tabela_pdf = (
+            df_filtrado.groupby("produto")["quantidade"]
+            .sum()
+            .sort_values(ascending=False)
+            .reset_index()
+        )
+
+    pdf = gerar_pdf(
+        total_vendido=total_vendido,
+        total_faturado=total_faturado,
+        top_produtos=tabela_pdf
+    )
+
+    st.download_button(
+        label="Baixar relatório em PDF",
+        data=pdf,
+        file_name="relatorio_vendas.pdf",
+        mime="application/pdf"
+    )
 
     aba1, aba2, aba3, aba4, aba5 = st.tabs(
         ["Base", "Análise Geral", "Semanal", "Previsão", "Estoque"]

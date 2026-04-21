@@ -6,39 +6,55 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 
 def validar_csv(df):
-    colunas_necessarias = ["data", "produto", "quantidade", "preco", "estoque_atual"]
-    faltando = [col for col in colunas_necessarias if col not in df.columns]
+    df = df.copy()
 
-    if faltando:
-        return None, f"O arquivo não contém as colunas obrigatórias: {faltando}"
+    faltantes = []
 
-    try:
-        df = df.copy()
-
+    # DATA
+    if "data" not in df.columns:
+        df["data"] = pd.date_range(start="2025-01-01", periods=len(df))
+        faltantes.append("data")
+    else:
         df["data"] = pd.to_datetime(df["data"], errors="coerce")
-        df["quantidade"] = pd.to_numeric(df["quantidade"], errors="coerce")
-        df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
-        df["estoque_atual"] = pd.to_numeric(df["estoque_atual"], errors="coerce")
 
-        df = df.dropna(subset=["data", "produto", "quantidade", "preco", "estoque_atual"])
+    # PRODUTO
+    if "produto" not in df.columns:
+        df["produto"] = "Produto Genérico"
+        faltantes.append("produto")
 
-        if df.empty:
-            return None, "O arquivo ficou vazio após a limpeza dos dados."
+    # QUANTIDADE
+    if "quantidade" not in df.columns:
+        df["quantidade"] = 1
+        faltantes.append("quantidade")
+    else:
+        df["quantidade"] = pd.to_numeric(df["quantidade"], errors="coerce").fillna(1)
 
-        return df, None
+    # PREÇO
+    if "preco" not in df.columns:
+        df["preco"] = 0
+        faltantes.append("preco")
+    else:
+        df["preco"] = pd.to_numeric(df["preco"], errors="coerce").fillna(0)
 
-    except Exception as e:
-        return None, f"Erro ao tratar os dados: {e}"
+    # ESTOQUE
+    if "estoque_atual" not in df.columns:
+        df["estoque_atual"] = 0
+        faltantes.append("estoque_atual")
+    else:
+        df["estoque_atual"] = pd.to_numeric(df["estoque_atual"], errors="coerce").fillna(0)
 
+    df = df.dropna(subset=["data"])
+
+    return df, faltantes
 
 def processar_dados(df):
-    df, erro = validar_csv(df)
+    df, faltantes = validar_csv(df)
 
-    if erro:
-        return {
-            "sucesso": False,
-            "erro": erro
-        }
+if df is None:
+    return {
+        "sucesso": False,
+        "erro": "Erro ao processar arquivo"
+    }
 
     try:
         df["ano"] = df["data"].dt.year

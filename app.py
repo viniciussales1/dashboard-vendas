@@ -46,7 +46,7 @@ def reconhecer_colunas(chunk):
     mapa_sinonimos = {
         "data": [
             "data", "dt", "dia", "data_venda", "dt_venda", "data_da_venda",
-            "data_movimento", "data_pedido", "date"
+            "data_movimento", "data_pedido", "date", "ano", "year", "years", "mes", "periodo"
         ],
         "produto": [
             "produto", "item", "nome_produto", "descricao", "descricao_produto",

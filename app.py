@@ -8,7 +8,7 @@ from relatorio import gerar_pdf
 
 st.set_page_config(
     page_title="Análise Preditiva + Análise Descritiva",
-    page_icon="📊",
+    page_icon="https://www.nubusnatal.com.br/imagens/estacionatal.png",
     layout="wide"
 )
 

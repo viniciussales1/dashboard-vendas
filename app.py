@@ -50,7 +50,7 @@ def reconhecer_colunas(chunk):
         ],
         "produto": [
             "produto", "item", "nome_produto", "descricao", "descricao_produto",
-            "produto_nome", "mercadoria", "product", "nome"
+            "produto_nome", "mercadoria", "product", "nome", "name", "name_product"
         ],
         "quantidade": [
             "quantidade", "qtd", "quant", "qte", "quantidade_vendida",

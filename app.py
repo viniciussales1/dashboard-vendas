@@ -20,7 +20,7 @@ def carregar_css(nome_arquivo):
 
 carregar_css("style.css")
 
-USUARIO_CORRETO = "admin"
+USUARIO_CORRETO = "Admin"
 SENHA_CORRETA = "1234"
 LIMITE_ARQUIVO_MB = 100
 LIMITE_ARQUIVO_BYTES = LIMITE_ARQUIVO_MB * 1024 * 1024
